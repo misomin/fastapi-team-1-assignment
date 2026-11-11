@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 
+import wapang.database.models
 from wapang.api import api_router
 from wapang.common.source_hash import get_source_hash
 from wapang.common.exceptions import (
