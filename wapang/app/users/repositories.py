@@ -30,3 +30,9 @@ class UserRepository:
 
         self.session.flush()
         return user
+
+    def get_orders_by_user_id(self, user_id: str) -> list:
+        from wapang.app.orders.models import Order
+
+        statement = select(Order).where(Order.user_id == user_id)
+        return list(self.session.scalars(statement).all())

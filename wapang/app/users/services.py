@@ -23,3 +23,6 @@ class UserService:
 
     def update_user(self, user: User, updates: dict[str, str]) -> User:
         return self.user_repository.update_user(user, updates)
+
+    def get_user_orders(self, user_id: str) -> list:
+        return self.user_repository.get_orders_by_user_id(user_id)

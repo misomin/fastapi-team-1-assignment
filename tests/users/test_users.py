@@ -1,5 +1,7 @@
 from fastapi.testclient import TestClient
+from types import SimpleNamespace
 from wapang.app.users.models import User
+from wapang.app.users.repositories import UserRepository
 import pytest
 
 # TEST POST /api/users
@@ -251,5 +253,58 @@ def test_update_me_invalid_token(client: TestClient):
         json={"nickname": "waffle"},
     )
 
+    assert response.status_code == 401
+    assert response.json()["error_code"] == "ERR_007"
+
+
+def test_get_my_orders(client: TestClient, access_token: str, user: User, monkeypatch):
+    def fake_orders(self, user_id: str):
+        assert user_id == user.id
+        return [
+            SimpleNamespace(id="order-1", total_price=41000, status="ORDERED"),
+            SimpleNamespace(id="order-2", total_price=25000, status="COMPLETE"),
+        ]
+
+    monkeypatch.setattr(UserRepository, "get_orders_by_user_id", fake_orders)
+    response = client.get(
+        "/api/users/me/orders",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {"order_id": "order-1", "total_price": 41000, "status": "ORDERED"},
+        {"order_id": "order-2", "total_price": 25000, "status": "COMPLETE"},
+    ]
+
+
+def test_get_my_orders_without_token(client: TestClient):
+    response = client.get("/api/users/me/orders")
+    assert response.status_code == 401
+    assert response.json()["error_code"] == "ERR_005"
+
+
+def test_get_my_orders_empty(client: TestClient, access_token: str, monkeypatch):
+    monkeypatch.setattr(UserRepository, "get_orders_by_user_id", lambda self, user_id: [])
+    response = client.get(
+        "/api/users/me/orders",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_get_my_orders_bad_header(client: TestClient, access_token: str):
+    response = client.get(
+        "/api/users/me/orders", headers={"Authorization": access_token}
+    )
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "ERR_006"
+
+
+def test_get_my_orders_invalid_token(client: TestClient):
+    response = client.get(
+        "/api/users/me/orders", headers={"Authorization": "Bearer invalidtoken"}
+    )
     assert response.status_code == 401
     assert response.json()["error_code"] == "ERR_007"

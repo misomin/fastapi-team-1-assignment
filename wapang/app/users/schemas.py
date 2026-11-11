@@ -44,3 +44,9 @@ class UserResponse(BaseModel):
     phone_number: str | None
     
     model_config = ConfigDict(from_attributes=True)
+
+
+class UserOrderResponse(BaseModel):
+    order_id: str
+    total_price: int
+    status: str
