@@ -7,8 +7,7 @@ from alembic import context
 
 # Alembic을 통해 인식돼야 하는 모델들을 모두 import 해야 합니다!
 from wapang.database.common import Base
-import wapang.app.auth.models
-import wapang.app.users.models
+import wapang.database.models
 
 
 from wapang.database.settings import DB_SETTINGS
