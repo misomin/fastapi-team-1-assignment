@@ -2,6 +2,8 @@ from fastapi.testclient import TestClient
 from types import SimpleNamespace
 from wapang.app.users.models import User
 from wapang.app.users.repositories import UserRepository
+from sqlalchemy.orm import Session
+from wapang.app.orders.models import Order, OrderStatus
 import pytest
 
 # TEST POST /api/users
@@ -293,7 +295,6 @@ def test_get_my_orders_empty(client: TestClient, access_token: str, monkeypatch)
     assert response.status_code == 200
     assert response.json() == []
 
-
 def test_get_my_orders_bad_header(client: TestClient, access_token: str):
     response = client.get(
         "/api/users/me/orders", headers={"Authorization": access_token}
@@ -308,3 +309,31 @@ def test_get_my_orders_invalid_token(client: TestClient):
     )
     assert response.status_code == 401
     assert response.json()["error_code"] == "ERR_007"
+
+def test_get_my_orders_from_database(
+    client: TestClient,
+    db_session: Session,
+    user: User,
+    access_token: str,
+):
+    order = Order(
+        user_id=user.id,
+        status=OrderStatus.ORDERED,
+        total_price=41000,
+    )
+    db_session.add(order)
+    db_session.commit()
+
+    response = client.get(
+        "/api/users/me/orders",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "order_id": order.id,
+            "total_price": 41000,
+            "status": "ORDERED",
+        }
+    ]
