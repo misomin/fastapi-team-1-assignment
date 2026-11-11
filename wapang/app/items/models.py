@@ -17,6 +17,7 @@ class Item(Base):
     __tablename__ = "items"
     __table_args__ = (
         CheckConstraint("stock >= 0", name="ck_items_stock_non_negative"),
+        CheckConstraint("price >= 0", name="ck_items_price_non_negative"),
     )
 
     id: Mapped[str] = mapped_column(
