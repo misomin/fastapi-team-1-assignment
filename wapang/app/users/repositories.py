@@ -1,5 +1,4 @@
 from typing import Annotated
-import uuid
 
 from fastapi import Depends
 from sqlalchemy import select
@@ -24,3 +23,16 @@ class UserRepository:
     
     def get_user_by_email(self, email: str) -> User | None:
         return self.session.scalar(select(User).where(User.email == email))
+
+    def update_user(self, user: User, updates: dict[str, str]) -> User:
+        for field_name, value in updates.items():
+            setattr(user, field_name, value)
+
+        self.session.flush()
+        return user
+
+    def get_orders_by_user_id(self, user_id: str) -> list:
+        from wapang.app.orders.models import Order
+
+        statement = select(Order).where(Order.user_id == user_id)
+        return list(self.session.scalars(statement).all())
