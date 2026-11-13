@@ -120,5 +120,35 @@ GitHub의 외부 health 검사까지 통과한 뒤 `ip.py`의 주소와 배포 �
 
 위 pytest의 DB fixture는 메모리 SQLite를 사용합니다. 이 실행은 MySQL migration 재검증이나
 실제 systemd·Docker·GitHub Actions 실행을 포함하지 않습니다. CI 성공 SHA 선택 조건은
-workflow 코드 검토와 문법 검사로 확인했으며, 실제 CI/CD 연동과 RDS migration·배포는
-별도 요청 후 검증해야 합니다. 전체 API 구현 완료를 의미하지 않습니다.
+workflow 코드 검토와 문법 검사로 확인했습니다. 아래의 실제 운영 검증은 이 pytest 실행과
+별도로 수행했습니다. 테스트 개수만으로 전체 API 요구사항 충족을 판단하지 않습니다.
+
+## 실제 배포 및 RDS 검증 (2026-11-13)
+
+- PR #5를 merge한 `275bc3f5b785f9ec46ce845c48daaabb5127a70a`의
+  [main CI](https://github.com/misomin/fastapi-team-1-assignment/actions/runs/43445932083)와
+  [CD](https://github.com/misomin/fastapi-team-1-assignment/actions/runs/43446021792)가 성공했습니다.
+  CI는 팀원 API를 포함해 188개 테스트를 통과했습니다.
+- EC2 `last-deployed`에서 CI 실행 번호 `16`과 위 배포 SHA를 확인했습니다.
+  외부 `/health`의 소스 해시가 해당 커밋의 `wapang` 소스 해시와 일치했습니다:
+  `45e1b3664aa8fc81aee63dac849eb055ca1385e1a30e9abba2ad7d4ba9ecbaff`.
+- `wapang.service`는 `ubuntu` 사용자로 `active/running`이며, 80번 포트를 사용합니다.
+  기존 `fastapi-assignment-3`는 `exited`, 재시작 정책은 `no`로 확인했습니다.
+- 운영 RDS `wapang`에 기존 revision `8da7c4b3f9fd`가 적용됐습니다.
+  `alembic current`는 head, `alembic check`는 변경 없음으로 통과했습니다.
+  별도 reflection 검사에서도 테이블, 컬럼 타입·nullability, PK, FK와 ondelete,
+  unique index를 포함한 unique 제약, 명시적 CHECK 제약이 ORM과 일치했습니다.
+- 외부 EC2 API로 회원가입·로그인·프로필 수정/조회, 상점·상품 생성/수정/조회,
+  여러 상점 주문 생성/조회, 주문 목록과 취소·구매 확정 상태 저장을 확인했습니다.
+  두 상점 주문 합계 `40500`, 재고 차감, 미인증 `401`, 타인 주문 조회 `403`,
+  재고 부족과 재상태 변경 `409`, 주문 실패 시 주문·재고 미변경을 확인했습니다.
+- 성공한 검증 묶음 `infra-9895fc5a`의 회원 3개, 상점 2개, 상품 2개, 주문 2개,
+  상점별 주문 내역 4개, 주문 상품 4개를 새 RDS 세션에서 다시 조회했습니다.
+  주문 상태 `CANCELED`/`COMPLETE`, 합계, 소유자와 재고가 API 결과와 일치했습니다.
+- 검증 중 잘못된 입력으로 중단된 묶음 `infra-795bc7a3`, `infra-ebc92f5f`도 보존했습니다.
+  첫 묶음은 상점 전화번호 중복으로 `409`가 발생했고, 두 번째는 검증 스크립트가 과제에 없는
+  취소 시 재고 복구를 요구해 중단됐습니다. 현재 API는 취소 시 재고를 유지합니다.
+  과제에 명시된 주문 실패 시 원자성을 검증하도록 입력·검증 조건을 수정해 재확인했습니다.
+  운영 데이터 삭제, 모델·API 변경, 새 revision 생성은 하지 않았습니다.
+- 제출 주소를 `ip.py`의 `EC2_IP = "15.164.230.226"`로 기록합니다.
+  이 문서와 주소 변경을 main에 반영한 뒤 최종 CI/CD 성공 및 배포 기록을 다시 확인합니다.
