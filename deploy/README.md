@@ -15,6 +15,27 @@
 
 ## 실제 배포 전 준비
 
+### 2026-11-13 운영 대상 확인
+
+- 기존 `seminar` 대신 사용자가 별도로 생성한 `wapang` DB를 사용합니다.
+- EC2에서 RDS `database-1`의 MySQL 8.4.11에 운영 설정으로 인증하고 `SELECT 1`을 확인했습니다.
+  `wapang`의 문자셋은 `utf8mb4`, collation은 `utf8mb4_0900_ai_ci`이며,
+  점검 당시 테이블과 `alembic_version`은 없었습니다. 실제 배포 직전에 다시 확인합니다.
+- `/home/ubuntu/wapang/shared/production.env`를 권한 `600`으로 준비했습니다.
+  비밀번호는 사용자가 EC2에서 직접 입력했고, 토큰 서명 키는 서버에서 생성했습니다.
+  실제 값은 저장소나 채팅에 포함하지 않습니다.
+- 연결 검사는 별도 `preflight.*` 디렉터리에서 실행했습니다. 이 작업으로 migration이나
+  systemd 설치·서비스 중지는 실행하지 않았으며, 실제 migration과 배포에는 별도 요청이 필요합니다.
+- 로컬 AWS CLI의 `wapang` 프로필은 서울 리전에서 `user/wapang-inspect`로 인증했고,
+  STS로 계정과 사용자를 확인했습니다. 로그인 세션은 만료될 수 있습니다.
+- GitHub 저장소에 `EC2_HOST=15.164.230.226`, `EC2_USER=ubuntu` Variables와
+  `EC2_KNOWN_HOSTS` Secret을 등록했습니다. 호스트 키는 기존 `known_hosts` 및
+  인증된 SSH 연결에서 읽은 서버 공개키와 대조했습니다.
+  `EC2_SSH_PRIVATE_KEY`도 사용자 승인 후 등록하고 Secret 이름·등록 시각을 확인했습니다.
+  Secrets의 실제 값은 출력하지 않았으며, CD 실행으로 해당 값을 사용하는 검증은 아직 하지 않았습니다.
+
+### 준비 절차
+
 이 절차는 실제 서버 설정·배포를 승인받은 뒤 수행합니다. 파일을 작성하는 것만으로
 배포나 RDS migration이 실행되지는 않습니다.
 
@@ -83,3 +104,21 @@ cat /home/ubuntu/wapang/last-deployed
 GitHub의 외부 health 검사까지 통과한 뒤 `ip.py`의 주소와 배포 소스 해시를 확인합니다.
 전체 API가 완성되면 EC2 API로 회원·상점·상품·주문이 RDS에 저장·조회되는지 별도로 검증합니다.
 로컬의 배포 실패 경로 검증은 `ENV=test uv run pytest tests/deploy`로 실행할 수 있습니다.
+
+## 로컬 검증 결과 (2026-11-13)
+
+- `ENV=test uv run --frozen --python 3.12 pytest`: Python 3.12.14에서 48개 통과.
+  이 중 `tests/deploy`의 13개 검사는 임시 디렉터리와 명령 대역을 사용해 사전 검사 실패 시
+  기존 서비스 유지, migration 실패 시 재시작 차단, 중지·migration·재시작 순서,
+  health 실패 시 성공 기록 방지, 오래된 실행 거부, 동일 실행 재시도와 SHA 변경 거부,
+  배포 잠금, health 해시 검사 및 설정 오류 시 비밀 값 비노출을 검증합니다.
+- `actionlint .github/workflows/ci.yaml .github/workflows/cd.yaml`: v1.7.12에서 통과.
+- `bash -n deploy/deploy.sh`와 `git diff --check`: 통과.
+- `ENV=test uv run --frozen --python 3.12 alembic heads`: 단일 head `8da7c4b3f9fd` 확인.
+  새 revision은 생성하지 않았습니다.
+- 루트 `README.md`와 `.env.test`는 기준 main `069dca7` 대비 변경이 없습니다.
+
+위 pytest의 DB fixture는 메모리 SQLite를 사용합니다. 이 실행은 MySQL migration 재검증이나
+실제 systemd·Docker·GitHub Actions 실행을 포함하지 않습니다. CI 성공 SHA 선택 조건은
+workflow 코드 검토와 문법 검사로 확인했으며, 실제 CI/CD 연동과 RDS migration·배포는
+별도 요청 후 검증해야 합니다. 전체 API 구현 완료를 의미하지 않습니다.
