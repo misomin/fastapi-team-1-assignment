@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy import URL
 from wapang.settings import SETTINGS
 
 
@@ -13,7 +14,14 @@ class DatabaseSettings(BaseSettings):
 
     @property
     def url(self) -> str:
-        return f"{self.dialect}+{self.driver}://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}"
+        return URL.create(
+            drivername=f"{self.dialect}+{self.driver}",
+            username=self.user,
+            password=self.password,
+            host=self.host,
+            port=self.port,
+            database=self.database,
+        ).render_as_string(hide_password=False)
 
     model_config = SettingsConfigDict(
         case_sensitive=False,

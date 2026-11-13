@@ -1,0 +1,23 @@
+[Unit]
+Description=Wapang FastAPI
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/wapang/current
+Environment=ENV=prod
+UnsetEnvironment=DB_DIALECT DB_DRIVER DB_HOST DB_PORT DB_USER DB_PASSWORD DB_DATABASE ACCESS_TOKEN_SECRET REFRESH_TOKEN_SECRET SHORT_SESSION_LIFESPAN LONG_SESSION_LIFESPAN UV_ENV_FILE UV_NO_ENV_FILE
+ExecStart=/home/ubuntu/.local/bin/uv run --frozen --no-sync --env-file /home/ubuntu/wapang/shared/production.env uvicorn wapang.main:app --host 0.0.0.0 --port 80
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
