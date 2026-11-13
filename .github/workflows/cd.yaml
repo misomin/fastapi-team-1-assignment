@@ -1,0 +1,111 @@
+name: CD
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Do not interrupt a deployment while MySQL DDL is running.
+concurrency:
+  group: wapang-production
+  cancel-in-progress: false
+
+jobs:
+  eligible:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      deploy: ${{ steps.main.outputs.deploy }}
+    steps:
+      - uses: actions/github-script@v7
+        id: main
+        with:
+          script: |
+            const { data } = await github.rest.git.getRef({
+              ...context.repo, ref: 'heads/main'
+            });
+            const deploy = data.object.sha === context.payload.workflow_run.head_sha;
+            core.setOutput('deploy', String(deploy));
+            if (!deploy) core.notice('Skipping CI for an older main commit.');
+
+  deploy:
+    needs: eligible
+    if: needs.eligible.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+      CI_RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+      EC2_HOST: ${{ vars.EC2_HOST }}
+      EC2_USER: ${{ vars.EC2_USER }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Package the commit tested by CI
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$DEPLOY_SHA"
+          python -c 'from wapang.common.source_hash import get_source_hash; print("SOURCE_HASH=" + get_source_hash())' >> "$GITHUB_ENV"
+          # Environment files and the git credential store are never sent.
+          git archive --format=tar.gz --output="$RUNNER_TEMP/release.tar.gz" \
+            "$DEPLOY_SHA" -- README.md pyproject.toml uv.lock alembic.ini wapang deploy
+      - name: Recheck main before transferring
+        id: main
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data } = await github.rest.git.getRef({
+              ...context.repo, ref: 'heads/main'
+            });
+            const deploy = data.object.sha === process.env.DEPLOY_SHA;
+            core.setOutput('deploy', String(deploy));
+            if (!deploy) core.notice('main changed during packaging; skipping.');
+      - name: Deploy and verify the public endpoint
+        if: steps.main.outputs.deploy == 'true'
+        env:
+          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          EC2_KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$EC2_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+          [[ "$EC2_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CI_RUN_NUMBER" =~ ^[0-9]+$ ]]
+          test -n "$EC2_SSH_PRIVATE_KEY"
+          test -n "$EC2_KNOWN_HOSTS"
+          SSH_KEY="$RUNNER_TEMP/wapang-key"
+          SSH_HOSTS="$RUNNER_TEMP/wapang-known-hosts"
+          trap 'rm -f "$SSH_KEY" "$SSH_HOSTS"' EXIT
+          umask 077
+          printf '%s\n' "$EC2_SSH_PRIVATE_KEY" > "$SSH_KEY"
+          printf '%s\n' "$EC2_KNOWN_HOSTS" > "$SSH_HOSTS"
+          unset EC2_SSH_PRIVATE_KEY EC2_KNOWN_HOSTS
+          options=(-i "$SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes
+            -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4
+            -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$SSH_HOSTS")
+          remote_dir="/home/ubuntu/wapang/incoming/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          ssh "${options[@]}" "$EC2_USER@$EC2_HOST" "mkdir -p '$remote_dir'"
+          scp "${options[@]}" "$RUNNER_TEMP/release.tar.gz" deploy/deploy.sh \
+            "$EC2_USER@$EC2_HOST:$remote_dir/"
+          result=0
+          ssh "${options[@]}" "$EC2_USER@$EC2_HOST" \
+            "bash '$remote_dir/deploy.sh' '$remote_dir/release.tar.gz' '$DEPLOY_SHA' '$SOURCE_HASH' '$CI_RUN_NUMBER'" || result=$?
+          if (( result == 3 )); then
+            echo '::notice::EC2 skipped an older CI run.'
+            exit 0
+          fi
+          (( result == 0 )) || exit "$result"
+          python -m deploy.verify_health "http://$EC2_HOST/health" "$SOURCE_HASH"
